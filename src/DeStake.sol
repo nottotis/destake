@@ -68,6 +68,9 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
     // emitted on delegation address added to DeStake.delegationAddress 
     event DelegationAddressAdded(address toBeDelegated);
 
+    // emitted on delegation address added to DeStake.delegationAddress 
+    event DelegationAddressRemoved(address toBeRemoved);
+
     // emitted on deposited GRT to this contract
     event GRTDeposited(address depositor, uint256 grtAmount);
 
@@ -81,6 +84,8 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
     event NewFee(uint32);
 
     event UserWithdraw(address user,uint256 amount);
+
+    event UserDepositAndDelegate(address user, address indexer, uint256 amount);
 
 
     function initialize(address _grtAddress, address _grtStakingAddress) public initializer {
@@ -109,6 +114,12 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
         //todo Should additionally check if the address is a really an indexer
         delegationAddress.add(_toBeDelegated);
         emit DelegationAddressAdded(_toBeDelegated);
+    }
+
+    function removeDelegationAddress(address _toBeRemoved) public onlyOwner{
+        require(delegationAddress.contains(_toBeRemoved),"Cannot be removed.");
+        delegationAddress.remove(_toBeRemoved);
+        emit DelegationAddressRemoved(_toBeRemoved);
     }
 
     function getDelegationAddressSize() external view returns(uint256){
@@ -150,6 +161,30 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
             delegationShares[addressToBeDelegated] += grtStakingAddress.delegate(addressToBeDelegated, GRTPerIndexers);
             emit GRTDelegatedToIndexer(addressToBeDelegated, GRTPerIndexers);
         }
+    }
+
+    function depositAndDelegate(uint256 _delegateAmount) external nonReentrant whenNotPaused{
+        uint256 depositedGRT = tokenStatus.waitingToDelegate + tokenStatus.delegated;
+        require(depositedGRT + _delegateAmount <= max_sgrt,"Max deposit amount reached");
+        require(_delegateAmount<=grtToken.balanceOf(msg.sender),"Not enough GRT");
+        uint256 allowedAmount = grtToken.allowance(msg.sender,address(this));
+        require(_delegateAmount <= allowedAmount,"Insufficient allowance");
+        uint256 numberOfIndexers = delegationAddress.length();
+        require(numberOfIndexers>0,"No indexer to delegate to.");
+
+        grtToken.transferFrom(msg.sender, address(this), _delegateAmount);
+        uint256 sGRTAmount = _delegateAmount-taxGRTAmount(_delegateAmount)-feeGRTAmount(_delegateAmount);
+        sGRT.mint(msg.sender,sGRTAmount);
+
+        uint256 GRTPerIndexers = sGRTAmount / numberOfIndexers;
+        tokenStatus.delegated += _delegateAmount;
+
+        for (uint256 i=0;i<numberOfIndexers;i++){
+            address addressToBeDelegated = delegationAddress.at(i);
+            delegationShares[addressToBeDelegated] += grtStakingAddress.delegate(addressToBeDelegated, GRTPerIndexers);
+            emit UserDepositAndDelegate(msg.sender, addressToBeDelegated, GRTPerIndexers);
+        }
+
     }
 
     function setMaxIssuance(uint256 _newMaxIssuance) external onlyOwner{
