@@ -86,9 +86,17 @@ contract MockStaking {
         pool.shares += shares;
     }
 
-
     function undelegate(address indexer, uint256 amount) external returns(uint256) {
         delegationPools[indexer].queryFeeCut = delegationPools[indexer].queryFeeCut;
-        return amount;
+        return amount/amount*amount;
     }
+
+    function getDelegation(address _indexer, address _delegator)
+        external
+        view
+        returns (Delegation memory)
+    {
+        return delegationPools[_indexer].delegators[_delegator];
+    }
+    
 }

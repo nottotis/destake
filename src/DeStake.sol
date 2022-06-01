@@ -6,10 +6,12 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/cryptography/MerkleProofUpgradeable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "./StakedGRT.sol";
 import "graph-protocol/staking/IStaking.sol";
 import "graph-protocol/staking/StakingStorage.sol";
+import "graph-protocol/epochs/IEpochManager.sol";
 
 contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,PausableUpgradeable{
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -27,6 +29,10 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
         uint256 undelegated;
     }
 
+    struct StakingRewardsClaimStatus{
+        uint256 claimed;
+    }
+
     // GRT token address
     ERC20 public grtToken;
 
@@ -38,6 +44,10 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
 
     // Addresses for deposited GRT to be delegated to
     EnumerableSet.AddressSet private delegationAddress;
+
+    // Addresses to be removed from delegation
+    EnumerableSet.AddressSet private toBeRemovedAddress;
+
 
     // Amount of deposited GRT for each address;
     mapping(address => uint256) public deposit;
@@ -56,11 +66,17 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
 
     TokenStatus tokenStatus;
     
-    // shares owned per delegation
+    // shares owned per delegation (shares, not GRT token!)
     mapping(address => uint256) public delegationShares;
 
     // pending undelegated balance
     mapping(address => PendingUndelegate) public pendingUndelegates;
+
+    bytes32 public stakingMerkleRoot;
+
+    address public stakingEpochManager;
+    // Removed delegation addresses
+    EnumerableSet.AddressSet private removedDelegationAddress;
 
     // emitted on changes of GRT address
     event GRTTokenAddressChanged(address grtToken);
@@ -87,8 +103,11 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
 
     event UserDepositAndDelegate(address user, address indexer, uint256 amount);
 
+    event StakingRewardClaimed(address user, uint256 claimedAmount);
+    
 
-    function initialize(address _grtAddress, address _grtStakingAddress) public initializer {
+
+    function initialize(address _grtAddress, address _grtStakingAddress, address _stakingEpochManager) public initializer {
         __Ownable_init();
         __Pausable_init();
         sGRT = new StakedGRT();
@@ -96,6 +115,7 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
         max_sgrt = 1000000000e18;
         grtStakingAddress = IStaking(_grtStakingAddress);
         fee = 5000; //0.5%
+        stakingEpochManager=_stakingEpochManager;
     }
 
 
@@ -118,7 +138,9 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
 
     function removeDelegationAddress(address _toBeRemoved) public onlyOwner{
         require(delegationAddress.contains(_toBeRemoved),"Cannot be removed.");
+        require(!toBeRemovedAddress.contains(_toBeRemoved),"Already removed.");
         delegationAddress.remove(_toBeRemoved);
+        toBeRemovedAddress.add(_toBeRemoved);
         emit DelegationAddressRemoved(_toBeRemoved);
     }
 
@@ -139,6 +161,7 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
 
         grtToken.transferFrom(msg.sender, address(this), _grtAmount);
         sGRT.mint(msg.sender,_grtAmount-taxGRTAmount(_grtAmount)-feeGRTAmount(_grtAmount));
+        sGRT.mint(address(this),feeGRTAmount(_grtAmount));
 
         tokenStatus.waitingToDelegate += _grtAmount;
         emit GRTDeposited(msg.sender,_grtAmount);
@@ -163,6 +186,24 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
         }
     }
 
+    function startUndelegation() external onlyOwner{
+        uint256 toBeUndelegatedLength = toBeRemovedAddress.length();
+        require(toBeUndelegatedLength > 0,"No address to be undelegated");
+
+        for(uint256 i = 0; i<toBeUndelegatedLength;i++){
+            address addressToBeUndelegated = toBeRemovedAddress.at(i);
+            IStakingData.Delegation memory delegation = grtStakingAddress.getDelegation(addressToBeUndelegated, address(this));
+            uint256 undelegatedAmount = grtStakingAddress.undelegate(addressToBeUndelegated, delegation.shares);
+            delegationShares[addressToBeUndelegated] = 0;
+            removedDelegationAddress.add(addressToBeUndelegated);
+            emit GRTUndelegatedFromIndexer(addressToBeUndelegated,undelegatedAmount);
+        }
+        while(toBeRemovedAddress.length()>0){
+            toBeRemovedAddress.remove(toBeRemovedAddress.at(0));
+        }
+        
+    }
+
     function depositAndDelegate(uint256 _delegateAmount) external nonReentrant whenNotPaused{
         uint256 depositedGRT = tokenStatus.waitingToDelegate + tokenStatus.delegated;
         require(depositedGRT + _delegateAmount <= max_sgrt,"Max deposit amount reached");
@@ -174,10 +215,13 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
 
         grtToken.transferFrom(msg.sender, address(this), _delegateAmount);
         uint256 sGRTAmount = _delegateAmount-taxGRTAmount(_delegateAmount)-feeGRTAmount(_delegateAmount);
-        sGRT.mint(msg.sender,sGRTAmount);
 
-        uint256 GRTPerIndexers = sGRTAmount / numberOfIndexers;
+        sGRT.mint(address(this), feeGRTAmount(_delegateAmount));
+        sGRT.mint(msg.sender,  sGRTAmount);
+
+        uint256 GRTPerIndexers = _delegateAmount / numberOfIndexers;
         tokenStatus.delegated += _delegateAmount;
+        grtToken.approve(address(grtStakingAddress), _delegateAmount);
 
         for (uint256 i=0;i<numberOfIndexers;i++){
             address addressToBeDelegated = delegationAddress.at(i);
@@ -198,8 +242,9 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
     function redeemGRT(uint256 _amountToRedeem) external nonReentrant {
         require(_amountToRedeem <= sGRT.allowance(msg.sender, address(this)),"Not enough allowance");
         require(_amountToRedeem<=sGRT.balanceOf(msg.sender), "Not enough sGRT to redeem");
+        sGRT.transferFrom(msg.sender, address(this), _amountToRedeem);
         sGRT.burn(_amountToRedeem);
-        PendingUndelegate memory userPendingUndelegate = pendingUndelegates[msg.sender];
+        PendingUndelegate storage userPendingUndelegate = pendingUndelegates[msg.sender];
 
         // keep note on available redeem amount msg.sender
         userPendingUndelegate.lockedAmount+= _amountToRedeem;
@@ -210,7 +255,9 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
         uint256 GRTPerIndexers = _amountToRedeem / numberOfIndexers;
         for (uint256 i=0;i<numberOfIndexers;i++){
                 address addressToBeDelegated = delegationAddress.at(i);
-                delegationShares[addressToBeDelegated] += grtStakingAddress.undelegate(addressToBeDelegated, GRTPerIndexers);
+                (,,,, uint256 totalTokens, uint256 totalShares) = StakingV2Storage(address(grtStakingAddress)).delegationPools(addressToBeDelegated);
+                uint256 sharesToUndelegate = GRTPerIndexers*totalShares/totalTokens;
+                delegationShares[addressToBeDelegated] -= grtStakingAddress.undelegate(addressToBeDelegated, sharesToUndelegate);
                 emit GRTUndelegatedFromIndexer(addressToBeDelegated, GRTPerIndexers);
          }
 
@@ -249,6 +296,19 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
         }
     }
 
+    function claimPendingRewards(uint256 amount, bytes32[] calldata proofs) public{
+        bytes32 merkleLeaf = keccak256(abi.encodePacked(msg.sender,amount));
+        bool valid = MerkleProofUpgradeable.verify(proofs,stakingMerkleRoot,merkleLeaf);
+        require(valid,"invalid proof");
+
+        emit StakingRewardClaimed(msg.sender,amount);
+    }
+
+    function checkPendingRewards(address user, uint256 amount, bytes32[] calldata proofs) public view returns(bool){
+        bytes32 merkleLeaf = keccak256(abi.encodePacked(user,amount));
+        return MerkleProofUpgradeable.verify(proofs,stakingMerkleRoot,merkleLeaf);
+    }
+
     function getDelegationTaxPercentage() public view returns(uint32){
         require(address(grtStakingAddress) != address(0),"Staking address not set");
         return StakingV1Storage(address(grtStakingAddress)).delegationTaxPercentage();
@@ -276,6 +336,39 @@ contract DeStake is Initializable,OwnableUpgradeable,ReentrancyGuardUpgradeable,
     }
     function unpause() external whenPaused{
         _unpause();
+    }
+    function setStakingEpochManager(address _stakingEpochManager) external onlyOwner {
+        stakingEpochManager=_stakingEpochManager;
+    }
+
+    function getEpoch() external view returns(uint256){
+        return IEpochManager(stakingEpochManager).currentEpoch();
+    }
+
+    function epochStartBlock(uint256 _epoch) public view returns(uint256){
+        uint256 updatedEpoch = IEpochManager(stakingEpochManager).lastLengthUpdateEpoch();
+        uint256 updatedBlock = IEpochManager(stakingEpochManager).lastLengthUpdateBlock();
+        uint256 epochLenght = IEpochManager(stakingEpochManager).epochLength();
+        require(_epoch >= updatedEpoch);
+        
+        return updatedBlock + ((_epoch - updatedEpoch)*epochLenght);
+    }
+    function epochEndBlock(uint256 _epoch) public view returns(uint256){
+        return epochStartBlock(_epoch+1);
+    }
+
+    function totalGrtOnGraphStakingContract() public view returns(uint256){
+
+        uint256 totalAmount;
+
+        for(uint256 i = 0; i<delegationAddress.length(); i++){
+            IStakingData.Delegation memory delegation = grtStakingAddress.getDelegation(delegationAddress.at(i), address(this));
+            (,,,, uint256 totalTokens, uint256 totalShares) = StakingV2Storage(address(grtStakingAddress)).delegationPools(delegationAddress.at(i));
+
+            totalAmount += (delegation.shares*totalTokens/totalShares);
+        }
+
+        return totalAmount;
     }
 
 
