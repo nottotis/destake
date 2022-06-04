@@ -48,25 +48,25 @@ contract ContractTest is DSTest {
         assert(owner == DEPLOYER);
     }
 
-    // function testAddDelegationAddress(address indexer) public {
-    //     proxy.addDelegationAddress(indexer);
-    //     assert(proxy.getDelegationAddressSize() == 1);
-    //     assert(proxy.getDelegationAddress()[0] == indexer);
-    // }
+    function testAddDelegationAddress(address indexer) public {
+        proxy.addDelegationAddress(indexer);
+        assert(proxy.getDelegationAddressSize() == 1);
+        assert(proxy.getDelegationAddress()[0] == indexer);
+    }
 
     // function testFailOnSecondInitialize() public{
     //     proxy.initialize(address(0));
     // }
 
-    // function testTransferOwnership(address newOwner) public {
-    //     //skip if zero address
-    //     if(newOwner == address(0)){
-    //         return;
-    //     }
-    //     //test if not
-    //     proxy.transferOwnership(newOwner);
-    //     assert(proxy.owner() == newOwner);
-    // }
+    function testTransferOwnership(address newOwner) public {
+        //skip if zero address
+        if(newOwner == address(0)){
+            return;
+        }
+        //test if not
+        proxy.transferOwnership(newOwner);
+        assert(proxy.owner() == newOwner);
+    }
 
     function testOnDepositGRT() public{
         uint256 amountToDeposit = 100e18;
@@ -160,7 +160,7 @@ contract ContractTest is DSTest {
         assert(aliceReceiveSGRT == aliceBalanceAfter-aliceBalanceBefore);
     }
 
-    // function testRebaseRewards() external {// should test on inkeby only
+    // function testRebaseRewards() external {// should test on rinkeby only
     //     this.testDepositAndDelegate();
     //     emit log_named_uint("In staking",proxy.totalGrtOnGraphStakingContract());
     //     emit log_named_uint("Supply",proxy.totalSupply());
