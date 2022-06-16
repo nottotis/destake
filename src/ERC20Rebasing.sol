@@ -45,6 +45,8 @@ abstract contract ERC20Rebasing {
 
     mapping(address => uint256) public nonces;
 
+    bool private initialized;
+
     /*//////////////////////////////////////////////////////////////
                                CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
@@ -54,6 +56,7 @@ abstract contract ERC20Rebasing {
         string memory _symbol,
         uint8 _decimals
     ) public {
+        require(initialized);
         name = _name;
         symbol = _symbol;
         decimals = _decimals;
@@ -222,5 +225,5 @@ abstract contract ERC20Rebasing {
         totalSupply = newTotalSupply;
     }
 
-    uint256[45] private __gap;
+    uint256[44] private __gap;
 }
