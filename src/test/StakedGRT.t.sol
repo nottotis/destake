@@ -94,11 +94,15 @@ contract ContractTest is DSTest {
         cheats.startPrank(DEPLOYER);
         graphToken.approve(address(mockStaking),amountAvailable);
 
-        proxy.addDelegationAddress(address(1337));
-        proxy.addDelegationAddress(address(420));
-        // emit log_named_address("msg address",proxy.owner());
+        for(uint256 i=0;i<100;i++){
+            proxy.addDelegationAddress(address(uint160(i)));
+        }
+        
+        //StartDelegation consume max 13517112 gas on 100 delegation address set.
+        //run "forge test" with --gas-report flag to confirm 
         proxy.startDelegation();
         cheats.stopPrank();
+        // emit log_named_uint("msg address",graphToken.balanceOf(address(proxy)));
         assert(graphToken.balanceOf(address(proxy)) == 0);
         assert(graphToken.balanceOf(address(mockStaking)) == amountAvailable);
     }

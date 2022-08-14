@@ -4,22 +4,22 @@ set -e
 source `dirname "$0"`/.bashvar
 
 echo "Deploy ProxyAdmin"
-proxyAdmin=$(forge create --rpc-url $RPC_URL_RINKEBY --private-key $PRIVATE_KEY ProxyAdmin)
+proxyAdmin=$(forge create --rpc-url $RPC_URL --private-key $PRIVATE_KEY ProxyAdmin)
 proxyAdminAddress=$(echo $proxyAdmin | grep '0x[a-fA-F0-9]*' -o | sed -n 2p)
 echo $proxyAdminAddress
 
 echo "Deploy StakedGRT"
-stakedGRT=$(forge create --rpc-url $RPC_URL_RINKEBY --private-key $PRIVATE_KEY StakedGRT)
+stakedGRT=$(forge create --rpc-url $RPC_URL --private-key $PRIVATE_KEY StakedGRT)
 stakedGRTAddress=$(echo $stakedGRT | grep '0x[a-fA-F0-9]*' -o | sed -n 2p)
 echo $stakedGRTAddress
 
 echo "Deploy Proxy"
-proxy=$(forge create --rpc-url $RPC_URL_RINKEBY --private-key $PRIVATE_KEY TransparentUpgradeableProxy --constructor-args $stakedGRTAddress $proxyAdminAddress "")
+proxy=$(forge create --rpc-url $RPC_URL --private-key $PRIVATE_KEY TransparentUpgradeableProxy --constructor-args $stakedGRTAddress $proxyAdminAddress "")
 proxyAddress=$(echo $proxy | grep '0x[a-fA-F0-9]*' -o | sed -n 2p)
 echo $proxyAddress
 
 echo "Initializing proxy"
-initialize=$(cast send --rpc-url $RPC_URL_RINKEBY --private-key $PRIVATE_KEY $proxyAddress `cast calldata "initialize(address,address,address)" $GRT_ADDRESS $GRAPH_STAKING_ADDRESS $GRAPH_EPOCH_MANAGER`)
+initialize=$(cast send --rpc-url $RPC_URL --private-key $PRIVATE_KEY $proxyAddress `cast calldata "initialize(address,address,address)" $GRT_ADDRESS $GRAPH_STAKING_ADDRESS $GRAPH_EPOCH_MANAGER`)
 
 printf "$proxyAdminAddress\n$stakedGRTAddress\n$proxyAddress\n" > `dirname "$0"`/.deployed
 

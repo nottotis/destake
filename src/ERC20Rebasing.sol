@@ -56,7 +56,7 @@ abstract contract ERC20Rebasing {
         string memory _symbol,
         uint8 _decimals
     ) public {
-        require(initialized);
+        require(!initialized);
         name = _name;
         symbol = _symbol;
         decimals = _decimals;

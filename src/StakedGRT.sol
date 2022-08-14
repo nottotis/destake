@@ -11,6 +11,11 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "src/IStaking.sol";
 import "src/IEpochManager.sol";
 
+/**
+ * @title StakedGRT contract
+ * @dev StakedGRT contract implements ERC20 with rebasing function
+ * Mints StakedGRT token for deposits of GRT token and delegates deposited GRT tokens to a set of indexers address.
+ */
 contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, ReentrancyGuardUpgradeable, PausableUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
     // GRT token address
@@ -47,6 +52,9 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
     uint256 public redeemEndblock;
     uint256 public unbondingEndblock;
 
+    /**
+     * @dev Initialize the contract.
+     */
     function initialize(address _grtAddress, address _grtStakingAddress, address _stakingEpochManager) external initializer{
         __ERC20Rebasing_init("StakedGRT", "sGRT", 18);
         __Ownable_init();
@@ -58,16 +66,27 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         stakingEpochManager = _stakingEpochManager;
     }
 
-
+    /**
+     * @dev Set the GRT token address.
+     * @param _grtTokenAddress GRT token address
+     */
     function setGRTToken(address _grtTokenAddress) external onlyOwner{
         grtToken = IERC20(_grtTokenAddress);
         emit GRTTokenAddressChanged(_grtTokenAddress);
     }
 
+    /**
+     * @dev Set the GRT staking contract address.
+     * @param _grtStakingAddress Staking contract address
+     */
     function setGRTStakingAddress(address _grtStakingAddress) external onlyOwner{
         grtStakingAddress = IStaking(_grtStakingAddress);
     }
 
+    /**
+     * @dev Add delegation address to the indexers address set.
+     * @param _toBeDelegated Indexer address to be added
+     */
     function addDelegationAddress(address _toBeDelegated) public onlyOwner {
         require(!delegationAddress[delegationAddressIndex].contains(_toBeDelegated),"Address already exist.");
         //todo Should additionally check if the address is a really an indexer
@@ -75,6 +94,10 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         emit DelegationAddressAdded(_toBeDelegated);
     }
 
+    /**
+     * @dev Remove delegation address from the indexers address set.
+     * @param _toBeRemoved Indexer address to be removed
+     */
     function removeDelegationAddress(address _toBeRemoved) public onlyOwner{
         require(delegationAddress[delegationAddressIndex].contains(_toBeRemoved),"Cannot be removed.");
         require(!toBeRemovedAddress[toBeRemovedAddressIndex].contains(_toBeRemoved),"Already removed.");
@@ -83,14 +106,26 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         emit DelegationAddressRemoved(_toBeRemoved);
     }
 
+    /**
+     * @dev Return the size of delegation address set.
+     * @return Delegation address set size(length)
+     */
     function getDelegationAddressSize() external view returns(uint256){
         return delegationAddress[delegationAddressIndex].length();
     }
 
+    /**
+     * @dev Return the delegation address set.
+     * @return Delegation address set
+     */
     function getDelegationAddress() external view returns(address[] memory){
         return delegationAddress[delegationAddressIndex].values();
     }
 
+    /**
+     * @dev Deposit GRT token into the contract.
+     * @param _grtAmount GRT token deposit amount
+     */
     function depositGRT(uint256 _grtAmount) external nonReentrant whenNotPaused {
         uint256 depositedGRT = tokenStatus.waitingToDelegate + tokenStatus.delegated;
         require(depositedGRT + _grtAmount <= max_sgrt,"Max deposit amount reached");
@@ -106,6 +141,9 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         emit GRTDeposited(msg.sender,_grtAmount);
     }
 
+    /**
+     * @dev Start delegation to delegation address set.
+     */
     function startDelegation() external onlyOwner{
         uint256 numberOfIndexers = delegationAddress[delegationAddressIndex].length();
         uint256 depositedGRTAmount = tokenStatus.waitingToDelegate;
@@ -125,6 +163,9 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         }
     }
 
+    /**
+     * @dev Start undelegation from to be removed address set.
+     */
     function startUndelegation() external onlyOwner{
         uint256 toBeUndelegatedLength = toBeRemovedAddress[toBeRemovedAddressIndex].length();
         require(toBeUndelegatedLength > 0,"No address to be undelegated");
@@ -143,6 +184,10 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         
     }
 
+    /**
+     * @dev Deposits and delegate GRT token
+     * @param _delegateAmount To be delegated GRT token amount
+     */
     function depositAndDelegate(uint256 _delegateAmount) external nonReentrant whenNotPaused{
         uint256 depositedGRT = tokenStatus.waitingToDelegate + tokenStatus.delegated;
         require(depositedGRT + _delegateAmount <= max_sgrt,"Max deposit amount reached");
@@ -170,12 +215,20 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
 
     }
 
+    /**
+     * @dev Set new max issuance of StakedGRT token
+     * @param _newMaxIssuance New max issuance amount
+     */
     function setMaxIssuance(uint256 _newMaxIssuance) external onlyOwner{
         max_sgrt = _newMaxIssuance;
         emit MaxIssuanceChanged(_newMaxIssuance);
     }
-    /// @notice Begins redeeming of sGRT to GRT (need to wait for unbonding period)
-/// @param _amountToRedeem amount of sGRT to be redeemed
+
+
+    /**
+     * @dev Begins redeeming of sGRT to GRT (need to wait for unbonding period)
+     * @param _amountToRedeem amount of sGRT to be redeemed
+     */
     function redeemGRT(uint256 _amountToRedeem) external nonReentrant {
         require(_amountToRedeem <= this.allowance(msg.sender, address(this)),"Not enough allowance");
         require(_amountToRedeem<=this.balanceOf(msg.sender), "Not enough sGRT to redeem");
@@ -200,7 +253,9 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
 
     }
 
-    /// @notice users to claim GRT after unbonding period ended
+    /**
+     * @dev Withdraw unbonded GRT
+     */
     function withdrawUnbondedGRT() external nonReentrant{
         PendingUndelegate memory userPendingUndelegate = pendingUndelegates[msg.sender];
         uint256 pendingAmount = userPendingUndelegate.lockedAmount;
@@ -219,6 +274,9 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
     }
 
 
+    /**
+     * @dev Claim GRT token after unbonding period
+     */
     function claimIfEnded() public {
         if(block.number >= unbondingEndblock){
             uint256 numberOfIndexers = delegationAddress[delegationAddressIndex].length();
@@ -234,38 +292,88 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         }
     }
     
+    /**
+     * @dev Mints token
+     * @param to Address to be minted tokens
+     * @param amount Amount of tokens to be minted
+     */
     function mint(address to, uint256 amount) internal {
         _mint(to, amount);
     }
 
+    /**
+     * @dev Burns token
+     * @param amount Amount of tokens to be burned
+     */
     function burn(uint256 amount) public virtual {
         _burn(_msgSender(), amount);
     }
 
+    /**
+     * @dev Set protocol fee
+     * @param newFee New fee
+     */
+    function setProtocolFee(uint32 newFee) external{
+        fee = newFee;
+        emit NewFee(newFee);
+    }
+
+    /**
+     * @dev Return staking contract tax percentage
+     * @return Tax percentage
+     */
     function getDelegationTaxPercentage() public view returns(uint32){
         require(address(grtStakingAddress) != address(0),"Staking address not set");
         return grtStakingAddress.delegationTaxPercentage();
     }
 
+    /**
+     * @dev Return GRT amount after staking tax.
+     * @param _grtAmount GRT amount to be converted.
+     * @return GRT amount after tax
+     */
     function taxGRTAmount(uint256 _grtAmount) public view returns(uint256){
         return (_grtAmount*(getDelegationTaxPercentage()))/1000000;
     }
 
+    /**
+     * @dev Return GRT amount after protocol tax.
+     * @param _grtAmount GRT amount to be converted.
+     * @return GRT amount after tax
+     */
     function feeGRTAmount(uint256 _grtAmount) public view returns(uint256){
         return (_grtAmount*(fee))/1000000;
     }
     
+    /**
+     * @dev Return GRT amount pending to be delegated.
+     * @return GRT amount to be delegated
+     */
     function getToBeDelegatedAmount() external view returns(uint256){
         return tokenStatus.waitingToDelegate;
     }
+
+    /**
+     * @dev Set staking epoch manager contract address.
+     * @param _stakingEpochManager Staking epoch manager address.
+     */
     function setStakingEpochManager(address _stakingEpochManager) external onlyOwner {
         stakingEpochManager=_stakingEpochManager;
     }
 
+    /**
+     * @dev Return current epoch.
+     * @return Staking epoch number
+     */
     function getEpoch() external view returns(uint256){
         return IEpochManager(stakingEpochManager).currentEpoch();
     }
 
+    /**
+     * @dev Return Start block number for given epoch.
+     * @param _epoch Epoch number
+     * @return Epoch start block
+     */
     function epochStartBlock(uint256 _epoch) public view returns(uint256){
         uint256 updatedEpoch = IEpochManager(stakingEpochManager).lastLengthUpdateEpoch();
         uint256 updatedBlock = IEpochManager(stakingEpochManager).lastLengthUpdateBlock();
@@ -278,6 +386,10 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         return epochStartBlock(_epoch+1);
     }
 
+    /**
+     * @dev Return GRT token delegated on staking contract.
+     * @return Delegated GRT amount
+     */
     function totalGrtOnGraphStakingContract() public view returns(uint256){
 
         uint256 totalAmount;
@@ -292,6 +404,9 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         return totalAmount;
     }
 
+    /**
+     * @dev Rebases token.
+     */
     function rebase() external onlyOwner{
         uint256 currentTotalStake = totalGrtOnGraphStakingContract();
         require(currentTotalStake>0,"No stake yet");
@@ -301,42 +416,75 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         emit Rebase(currentTotalStake);
     }
 
+    /**
+     * @dev Pause contract.
+     */
     function pause() external whenNotPaused{
         _pause();
     }
+
+    /**
+     * @dev Unpause contract.
+     */
     function unpause() external whenPaused{
         _unpause();
     }
 
 
 
-    // emitted on changes of GRT address
+    /**
+     * @dev Emitted when GRT token address changed to `grtToken`.
+     */
     event GRTTokenAddressChanged(address grtToken);
 
-    // emitted on delegation address added to DeStake.delegationAddress 
+    /**
+     * @dev Emitted when new indexer address `toBeDelegated` is added to the indexers address set.
+     */
     event DelegationAddressAdded(address toBeDelegated);
 
-    // emitted on delegation address added to DeStake.delegationAddress 
+    /**
+     * @dev Emitted when the indexer address `toBeRemoved` is removed from the indexers address set.
+     */
     event DelegationAddressRemoved(address toBeRemoved);
 
-    // emitted on deposited GRT to this contract
+    /**
+     * @dev Emitted when the `depositor` deposits `grtAmount` amount of GRT token..
+     */
     event GRTDeposited(address depositor, uint256 grtAmount);
 
-    // emitted when delegating GRT to indexer
+    /**
+     * @dev Emitted when `grtAmount` amount of GRT is delegated to `indexer` address.
+     */
     event GRTDelegatedToIndexer(address indexer, uint256 grtAmount);
 
+    /**
+     * @dev Emitted when `grtAmount` amount of GRT is undelegated from `indexer` address.
+     */
     event GRTUndelegatedFromIndexer(address indexer, uint256 grtAmount);
 
+    /**
+     * @dev Emitted when the max issuance of StakedGRT token is changed to `_newMax`.
+     */
     event MaxIssuanceChanged(uint256 _newMax);
 
-    event NewFee(uint32);
+    /**
+     * @dev Emitted when the protocol fee is changed to `newFee`.
+     */
+    event NewFee(uint32 newFee);
 
+    /**
+     * @dev Emitted when the `user` withdraws `amount` amount of unbonded GRT token.
+     */
     event UserWithdraw(address user,uint256 amount);
 
+    /**
+     * @dev Emitted when the `user` deposits and delegate `amount` of GRT token.
+     */
     event UserDepositAndDelegate(address user, address indexer, uint256 amount);
 
-    event StakingRewardClaimed(address user, uint256 claimedAmount);
-
+    /**
+     * @dev Emitted when the this token rebases to a new token supply of `newSupply`.
+     */
     event Rebase(uint256 newSupply);
 
 
