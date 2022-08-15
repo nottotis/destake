@@ -1,1 +1,0 @@
-Run test with "forge test --match-path src/test-goerli -f $RPC_URL"
