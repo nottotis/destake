@@ -1,0 +1,1 @@
+Run test with "forge test --match-path src/test-rinkeby -f $RPC_URL_RINKEBY"

@@ -29,13 +29,13 @@ contract ContractTest_Rinkeby is DSTest {
             proxy = StakedGRT(address(tmpProxy));
 
             cheats.startPrank(DEPLOYER);
-            graphToken = MockGraphToken(0x54Fe55d5d255b8460fB3Bc52D5D676F9AE5697CD);
-            mockStaking = MockStaking(0x2d44C0e097F6cD0f514edAC633d82E01280B4A5c);
+            graphToken = MockGraphToken(0x5c946740441C12510a167B447B7dE565C20b9E3C);
+            mockStaking = MockStaking(0x35e3Cb6B317690d662160d5d02A5b364578F62c9);
             proxy.initialize(address(graphToken),address(mockStaking), address(0));
             assert(proxy.grtToken() == graphToken);
             cheats.stopPrank();
 
-            cheats.startPrank(0x460cA3721131BC978e3CF3A49EfC545A2901A828);
+            cheats.startPrank(0x1246D7c4c903fDd6147d581010BD194102aD4ee2);
             MockGraphToken(address(graphToken)).mint(alice,10000000000e18);//1 million
             cheats.stopPrank();
     }
@@ -72,8 +72,11 @@ contract ContractTest_Rinkeby is DSTest {
         cheats.startPrank(DEPLOYER);
         graphToken.approve(address(mockStaking),amountAvailable);
 
+        proxy.addDelegationAddress(address(0xf88f95785F4048f20789c94132E3AcDeEc4bcFaB));
+        proxy.addDelegationAddress(address(0xe91Ba60341095E3a5802d308d77496277B6dE39E));
         proxy.addDelegationAddress(address(0x0F6Feb3BA20c56E94CfbCD98339E99bcE629D912));
-        proxy.addDelegationAddress(address(0x9b0B5b9e628a76A183cF7c3E2DC82F61aFBE3a39));
+        proxy.addDelegationAddress(address(0xF7355cC64e05acAeB0aB147293eEB85600463E5b));
+        proxy.addDelegationAddress(address(0xAC7f6653186F4013fba9502236934c4156883240));
 
         proxy.startDelegation();
         cheats.stopPrank();
@@ -137,14 +140,4 @@ contract ContractTest_Rinkeby is DSTest {
         uint256 aliceBalanceAfter = proxy.balanceOf(alice);
         assert(aliceReceiveSGRT == aliceBalanceAfter-aliceBalanceBefore);
     }
-
-    // function testGetDelegationTax() public{ //this test on mainnet
-    //     proxy.setGRTStakingAddress(0xF55041E37E12cD407ad00CE2910B8269B01263b9);
-    //     assert(proxy.getDelegationTaxPercentage() == 5000);
-    //     // emit log_named_uint("Tax",proxy.getDelegationTaxPercentage());
-    // }
-    // function testAfterTaxGRT() public {
-    //     proxy.setGRTStakingAddress(0xF55041E37E12cD407ad00CE2910B8269B01263b9);
-    //     emit log_named_uint("After tax",proxy.afterTaxGRTAmount(1000));
-    // }
 }
