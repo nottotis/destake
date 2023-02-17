@@ -51,12 +51,9 @@ abstract contract ERC20Rebasing {
                                CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    function __ERC20Rebasing_init(
-        string memory _name,
-        string memory _symbol,
-        uint8 _decimals
-    ) public {
+    function __ERC20Rebasing_init(string memory _name, string memory _symbol, uint8 _decimals) public {
         require(!initialized);
+        initialized = true;
         name = _name;
         symbol = _symbol;
         decimals = _decimals;
@@ -79,7 +76,7 @@ abstract contract ERC20Rebasing {
 
     function transfer(address to, uint256 amount) public virtual returns (bool) {
         require(to != address(0), "ERC20: transfer to the zero address");
-        uint256 amountInShare = amount*totalShare/totalSupply;
+        uint256 amountInShare = amount * totalShare / totalSupply;
         shares[msg.sender] -= amountInShare;
 
         // Cannot overflow because the sum of all user
@@ -93,17 +90,13 @@ abstract contract ERC20Rebasing {
         return true;
     }
 
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) public virtual returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) public virtual returns (bool) {
         require(from != address(0), "ERC20: transfer from the zero address");
         uint256 allowed = allowance[from][msg.sender]; // Saves gas for limited approvals.
 
         if (allowed != type(uint256).max) allowance[from][msg.sender] = allowed - amount;
 
-        uint256 amountInShare = amount*totalShare/totalSupply;
+        uint256 amountInShare = amount * totalShare / totalSupply;
 
         shares[from] -= amountInShare;
 
@@ -122,15 +115,10 @@ abstract contract ERC20Rebasing {
                              EIP-2612 LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    function permit(
-        address owner,
-        address spender,
-        uint256 value,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) public virtual {
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        public
+        virtual
+    {
         require(deadline >= block.timestamp, "PERMIT_DEADLINE_EXPIRED");
 
         // Unchecked because the only math done is incrementing
@@ -173,16 +161,15 @@ abstract contract ERC20Rebasing {
     }
 
     function computeDomainSeparator() internal view virtual returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(
-                    keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                    keccak256(bytes(name)),
-                    keccak256("1"),
-                    block.chainid,
-                    address(this)
-                )
-            );
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes(name)),
+                keccak256("1"),
+                block.chainid,
+                address(this)
+            )
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -192,21 +179,20 @@ abstract contract ERC20Rebasing {
     function _mint(address to, uint256 amount) internal virtual {
         require(to != address(0), "ERC20: mint to the zero address");
 
-        if(totalShare==0){
+        if (totalShare == 0) {
             totalSupply += amount;
             totalShare += amount;
             shares[to] += amount;
-        }
-        else{
+        } else {
             totalSupply += amount;
-            totalShare += amount*totalShare/(totalSupply-amount);
-            shares[to] += amount*totalShare/totalSupply;
+            totalShare += amount * totalShare / (totalSupply - amount);
+            shares[to] += amount * totalShare / totalSupply;
         }
         emit Transfer(address(0), to, amount);
     }
 
     function _burn(address from, uint256 amount) internal virtual {
-        uint256 amountInShare = amount*totalShare/totalSupply;
+        uint256 amountInShare = amount * totalShare / totalSupply;
         shares[from] -= amountInShare;
         totalSupply -= amount;
         totalShare -= amountInShare;
@@ -214,11 +200,11 @@ abstract contract ERC20Rebasing {
         emit Transfer(from, address(0), amount);
     }
 
-    function balanceOf(address user) public virtual returns(uint256){
-        if(totalShare==0){
+    function balanceOf(address user) public virtual returns (uint256) {
+        if (totalShare == 0) {
             return 0;
         }
-        return shares[user]*totalSupply/totalShare;
+        return shares[user] * totalSupply / totalShare;
     }
 
     function _rebase(uint256 newTotalSupply) internal virtual {

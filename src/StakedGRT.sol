@@ -16,9 +16,16 @@ import "src/IEpochManager.sol";
  * @dev StakedGRT contract implements ERC20 with rebasing function
  * Mints StakedGRT token for deposits of GRT token and delegates deposited GRT tokens to a set of indexers address.
  */
-contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, ReentrancyGuardUpgradeable, PausableUpgradeable {
+contract StakedGRT is
+    Initializable,
+    ERC20Rebasing,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
+{
     using EnumerableSet for EnumerableSet.AddressSet;
     // GRT token address
+
     IERC20 public grtToken;
     // max amount of sGRT to be issued (10% GRT total supply)
     uint256 public max_sgrt;
@@ -26,6 +33,9 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
     IStaking public grtStakingAddress;
 
     uint32 public fee;
+
+    // cumulatedFee is the cumulated fee in GRT
+    uint256 public cumulatedFee;
 
     TokenStatus tokenStatus;
 
@@ -42,7 +52,7 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
     // Removed delegation addresses
     EnumerableSet.AddressSet[100] private removedDelegationAddress;
     uint256 removedDelegationAddressIndex;
-    
+
     // shares owned per delegation (shares, not GRT token!)
     mapping(address => uint256) public delegationShares;
 
@@ -52,11 +62,20 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
     uint256 public redeemEndblock;
     uint256 public unbondingEndblock;
 
+    // last rebase da in unix day
+    uint256 public lastRebaseUnixDay;
+
+    // collateral amount to pause contract
+    uint256 public collateralAmountToPause;
+
     /**
      * @dev Initialize the contract.
      */
-    function initialize(address _grtAddress, address _grtStakingAddress, address _stakingEpochManager) external initializer{
-        __ERC20Rebasing_init("StakedGRT", "sGRT", 18);
+    function initialize(address _grtAddress, address _grtStakingAddress, address _stakingEpochManager)
+        external
+        initializer
+    {
+        __ERC20Rebasing_init("LiquidGRT", "lGRT", 18);
         __Ownable_init();
         __Pausable_init();
         grtToken = IERC20(_grtAddress);
@@ -64,13 +83,16 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         grtStakingAddress = IStaking(_grtStakingAddress);
         fee = 5000; //0.5%
         stakingEpochManager = _stakingEpochManager;
+
+        //1 million GRT to pause contract
+        collateralAmountToPause = 1000000e18;
     }
 
     /**
      * @dev Set the GRT token address.
      * @param _grtTokenAddress GRT token address
      */
-    function setGRTToken(address _grtTokenAddress) external onlyOwner{
+    function setGRTToken(address _grtTokenAddress) external onlyOwner {
         grtToken = IERC20(_grtTokenAddress);
         emit GRTTokenAddressChanged(_grtTokenAddress);
     }
@@ -79,7 +101,7 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @dev Set the GRT staking contract address.
      * @param _grtStakingAddress Staking contract address
      */
-    function setGRTStakingAddress(address _grtStakingAddress) external onlyOwner{
+    function setGRTStakingAddress(address _grtStakingAddress) external onlyOwner {
         grtStakingAddress = IStaking(_grtStakingAddress);
     }
 
@@ -88,8 +110,8 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @param _toBeDelegated Indexer address to be added
      */
     function addDelegationAddress(address _toBeDelegated) public onlyOwner {
-        require(!delegationAddress[delegationAddressIndex].contains(_toBeDelegated),"Address already exist.");
-        //todo Should additionally check if the address is a really an indexer
+        require(!delegationAddress[delegationAddressIndex].contains(_toBeDelegated), "Address already exist.");
+        //todo [Optional]Should additionally check if the address is a really an indexer
         delegationAddress[delegationAddressIndex].add(_toBeDelegated);
         emit DelegationAddressAdded(_toBeDelegated);
     }
@@ -98,9 +120,9 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @dev Remove delegation address from the indexers address set.
      * @param _toBeRemoved Indexer address to be removed
      */
-    function removeDelegationAddress(address _toBeRemoved) public onlyOwner{
-        require(delegationAddress[delegationAddressIndex].contains(_toBeRemoved),"Cannot be removed.");
-        require(!toBeRemovedAddress[toBeRemovedAddressIndex].contains(_toBeRemoved),"Already removed.");
+    function removeDelegationAddress(address _toBeRemoved) public onlyOwner {
+        require(delegationAddress[delegationAddressIndex].contains(_toBeRemoved), "Cannot be removed.");
+        require(!toBeRemovedAddress[toBeRemovedAddressIndex].contains(_toBeRemoved), "Already removed.");
         delegationAddress[delegationAddressIndex].remove(_toBeRemoved);
         toBeRemovedAddress[toBeRemovedAddressIndex].add(_toBeRemoved);
         emit DelegationAddressRemoved(_toBeRemoved);
@@ -110,7 +132,7 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @dev Return the size of delegation address set.
      * @return Delegation address set size(length)
      */
-    function getDelegationAddressSize() external view returns(uint256){
+    function getDelegationAddressSize() external view returns (uint256) {
         return delegationAddress[delegationAddressIndex].length();
     }
 
@@ -118,7 +140,7 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @dev Return the delegation address set.
      * @return Delegation address set
      */
-    function getDelegationAddress() external view returns(address[] memory){
+    function getDelegationAddress() external view returns (address[] memory) {
         return delegationAddress[delegationAddressIndex].values();
     }
 
@@ -128,35 +150,35 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      */
     function depositGRT(uint256 _grtAmount) external nonReentrant whenNotPaused {
         uint256 depositedGRT = tokenStatus.waitingToDelegate + tokenStatus.delegated;
-        require(depositedGRT + _grtAmount <= max_sgrt,"Max deposit amount reached");
-        require(_grtAmount<=grtToken.balanceOf(msg.sender),"Not enough GRT");
-        uint256 allowedAmount = grtToken.allowance(msg.sender,address(this));
-        require(_grtAmount <= allowedAmount,"Insufficient allowance");
+        require(depositedGRT + _grtAmount <= max_sgrt, "Max deposit amount reached");
+        require(_grtAmount <= grtToken.balanceOf(msg.sender), "Not enough GRT");
+        uint256 allowedAmount = grtToken.allowance(msg.sender, address(this));
+        require(_grtAmount <= allowedAmount, "Insufficient allowance");
 
         grtToken.transferFrom(msg.sender, address(this), _grtAmount);
-        mint(msg.sender,_grtAmount-taxGRTAmount(_grtAmount)-feeGRTAmount(_grtAmount));
-        mint(address(this),feeGRTAmount(_grtAmount));
+        mint(msg.sender, _grtAmount - taxGRTAmount(_grtAmount) - feeGRTAmount(_grtAmount));
+        mint(address(this), feeGRTAmount(_grtAmount));
+        cumulatedFee += feeGRTAmount(_grtAmount);
 
         tokenStatus.waitingToDelegate += _grtAmount;
-        emit GRTDeposited(msg.sender,_grtAmount);
+        emit GRTDeposited(msg.sender, _grtAmount);
     }
 
     /**
      * @dev Start delegation to delegation address set.
      */
-    function startDelegation() external onlyOwner{
+    function startDelegation() external onlyOwner {
         uint256 numberOfIndexers = delegationAddress[delegationAddressIndex].length();
         uint256 depositedGRTAmount = tokenStatus.waitingToDelegate;
-        require(numberOfIndexers>0,"No indexer to delegate to.");
-        require(depositedGRTAmount>0,"No grt deposited");
+        require(numberOfIndexers > 0, "No indexer to delegate to.");
+        require(depositedGRTAmount > 0, "No grt deposited");
         grtToken.approve(address(grtStakingAddress), depositedGRTAmount);
         uint256 GRTPerIndexers = depositedGRTAmount / numberOfIndexers;
 
         tokenStatus.delegated += depositedGRTAmount;
         tokenStatus.waitingToDelegate -= depositedGRTAmount;
 
-
-        for (uint256 i=0;i<numberOfIndexers;i++){
+        for (uint256 i = 0; i < numberOfIndexers; i++) {
             address addressToBeDelegated = delegationAddress[delegationAddressIndex].at(i);
             delegationShares[addressToBeDelegated] += grtStakingAddress.delegate(addressToBeDelegated, GRTPerIndexers);
             emit GRTDelegatedToIndexer(addressToBeDelegated, GRTPerIndexers);
@@ -166,101 +188,104 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
     /**
      * @dev Start undelegation from to be removed address set.
      */
-    function startUndelegation() external onlyOwner{
+    function startUndelegation() external onlyOwner {
         uint256 toBeUndelegatedLength = toBeRemovedAddress[toBeRemovedAddressIndex].length();
-        require(toBeUndelegatedLength > 0,"No address to be undelegated");
+        require(toBeUndelegatedLength > 0, "No address to be undelegated");
 
-        for(uint256 i = 0; i<toBeUndelegatedLength;i++){
+        for (uint256 i = 0; i < toBeUndelegatedLength; i++) {
             address addressToBeUndelegated = toBeRemovedAddress[toBeRemovedAddressIndex].at(i);
-            IStakingData.Delegation memory delegation = grtStakingAddress.getDelegation(addressToBeUndelegated, address(this));
+            IStakingData.Delegation memory delegation =
+                grtStakingAddress.getDelegation(addressToBeUndelegated, address(this));
             uint256 undelegatedAmount = grtStakingAddress.undelegate(addressToBeUndelegated, delegation.shares);
             delegationShares[addressToBeUndelegated] = 0;
             removedDelegationAddress[removedDelegationAddressIndex].add(addressToBeUndelegated);
-            emit GRTUndelegatedFromIndexer(addressToBeUndelegated,undelegatedAmount);
+            emit GRTUndelegatedFromIndexer(addressToBeUndelegated, undelegatedAmount);
         }
 
         // clear all
         toBeRemovedAddressIndex++;
-        
     }
 
     /**
      * @dev Deposits and delegate GRT token
      * @param _delegateAmount To be delegated GRT token amount
      */
-    function depositAndDelegate(uint256 _delegateAmount) external nonReentrant whenNotPaused{
+    function depositAndDelegate(uint256 _delegateAmount) external nonReentrant whenNotPaused {
         uint256 depositedGRT = tokenStatus.waitingToDelegate + tokenStatus.delegated;
-        require(depositedGRT + _delegateAmount <= max_sgrt,"Max deposit amount reached");
-        require(_delegateAmount<=grtToken.balanceOf(msg.sender),"Not enough GRT");
-        uint256 allowedAmount = grtToken.allowance(msg.sender,address(this));
-        require(_delegateAmount <= allowedAmount,"Insufficient allowance");
+        require(depositedGRT + _delegateAmount <= max_sgrt, "Max deposit amount reached");
+        require(_delegateAmount <= grtToken.balanceOf(msg.sender), "Not enough GRT");
+        uint256 allowedAmount = grtToken.allowance(msg.sender, address(this));
+        require(_delegateAmount <= allowedAmount, "Insufficient allowance");
         uint256 numberOfIndexers = delegationAddress[delegationAddressIndex].length();
-        require(numberOfIndexers>0,"No indexer to delegate to.");
+        require(numberOfIndexers > 0, "No indexer to delegate to.");
 
         grtToken.transferFrom(msg.sender, address(this), _delegateAmount);
-        uint256 sGRTAmount = _delegateAmount-taxGRTAmount(_delegateAmount)-feeGRTAmount(_delegateAmount);
+        uint256 sGRTAmount = _delegateAmount - taxGRTAmount(_delegateAmount) - feeGRTAmount(_delegateAmount);
 
         mint(address(this), feeGRTAmount(_delegateAmount));
-        mint(msg.sender,  sGRTAmount);
+        cumulatedFee += feeGRTAmount(_delegateAmount);
+        mint(msg.sender, sGRTAmount);
 
         uint256 GRTPerIndexers = _delegateAmount / numberOfIndexers;
         tokenStatus.delegated += _delegateAmount;
         grtToken.approve(address(grtStakingAddress), _delegateAmount);
 
-        for (uint256 i=0;i<numberOfIndexers;i++){
+        for (uint256 i = 0; i < numberOfIndexers; i++) {
             address addressToBeDelegated = delegationAddress[delegationAddressIndex].at(i);
             delegationShares[addressToBeDelegated] += grtStakingAddress.delegate(addressToBeDelegated, GRTPerIndexers);
             emit UserDepositAndDelegate(msg.sender, addressToBeDelegated, GRTPerIndexers);
         }
-
     }
 
     /**
      * @dev Set new max issuance of StakedGRT token
      * @param _newMaxIssuance New max issuance amount
      */
-    function setMaxIssuance(uint256 _newMaxIssuance) external onlyOwner{
+    function setMaxIssuance(uint256 _newMaxIssuance) external onlyOwner {
         max_sgrt = _newMaxIssuance;
         emit MaxIssuanceChanged(_newMaxIssuance);
     }
-
 
     /**
      * @dev Begins redeeming of sGRT to GRT (need to wait for unbonding period)
      * @param _amountToRedeem amount of sGRT to be redeemed
      */
     function redeemGRT(uint256 _amountToRedeem) external nonReentrant {
-        require(_amountToRedeem <= this.allowance(msg.sender, address(this)),"Not enough allowance");
-        require(_amountToRedeem<=this.balanceOf(msg.sender), "Not enough sGRT to redeem");
-        this.transferFrom(msg.sender, address(this), _amountToRedeem);
+        require(_amountToRedeem <= this.allowance(msg.sender, address(this)), "Not enough allowance");
+        require(_amountToRedeem <= this.balanceOf(msg.sender), "Not enough sGRT to redeem");
+
+        this.transferFrom(msg.sender, address(this), _amountToRedeem); //transfer all the amount to contract
+        _amountToRedeem = _amountToRedeem - feeGRTAmount(_amountToRedeem); //but don't burn the fee amount
+        cumulatedFee += feeGRTAmount(_amountToRedeem);
         this.burn(_amountToRedeem);
         PendingUndelegate storage userPendingUndelegate = pendingUndelegates[msg.sender];
 
         // keep note on available redeem amount msg.sender
-        userPendingUndelegate.lockedAmount+= _amountToRedeem;
+        userPendingUndelegate.lockedAmount += _amountToRedeem;
         userPendingUndelegate.lockedUntilBlock = unbondingEndblock;
 
         // staking.undelegate(_amountToRedeem)
         uint256 numberOfIndexers = delegationAddress[delegationAddressIndex].length();
         uint256 GRTPerIndexers = _amountToRedeem / numberOfIndexers;
-        for (uint256 i=0;i<numberOfIndexers;i++){
-                address addressToBeDelegated = delegationAddress[delegationAddressIndex].at(i);
-                (,,,, uint256 totalTokens, uint256 totalShares) = StakingV2Storage(address(grtStakingAddress)).delegationPools(addressToBeDelegated);
-                uint256 sharesToUndelegate = GRTPerIndexers*totalShares/totalTokens;
-                delegationShares[addressToBeDelegated] -= grtStakingAddress.undelegate(addressToBeDelegated, sharesToUndelegate);
-                emit GRTUndelegatedFromIndexer(addressToBeDelegated, GRTPerIndexers);
-         }
-
+        for (uint256 i = 0; i < numberOfIndexers; i++) {
+            address addressToBeDelegated = delegationAddress[delegationAddressIndex].at(i);
+            (,,,, uint256 totalTokens, uint256 totalShares) =
+                StakingV2Storage(address(grtStakingAddress)).delegationPools(addressToBeDelegated);
+            uint256 sharesToUndelegate = GRTPerIndexers * totalShares / totalTokens;
+            delegationShares[addressToBeDelegated] -=
+                grtStakingAddress.undelegate(addressToBeDelegated, sharesToUndelegate);
+            emit GRTUndelegatedFromIndexer(addressToBeDelegated, GRTPerIndexers);
+        }
     }
 
     /**
      * @dev Withdraw unbonded GRT
      */
-    function withdrawUnbondedGRT() external nonReentrant{
+    function withdrawUnbondedGRT() external nonReentrant {
         PendingUndelegate memory userPendingUndelegate = pendingUndelegates[msg.sender];
         uint256 pendingAmount = userPendingUndelegate.lockedAmount;
-        require(pendingAmount > 0,"No locked GRT");
-        require(userPendingUndelegate.lockedUntilBlock <= block.number ,"Unbonding endblock not reached");
+        require(pendingAmount > 0, "No locked GRT");
+        require(userPendingUndelegate.lockedUntilBlock <= block.number, "Unbonding endblock not reached");
 
         // claim from GRT staking contract for unbonded GRTs (check if unbonding period ended)
         claimIfEnded();
@@ -273,31 +298,56 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
         emit UserWithdraw(msg.sender, pendingAmount);
     }
 
-
     /**
      * @dev Claim GRT token after unbonding period
      */
     function claimIfEnded() public {
-        if(block.number >= unbondingEndblock){
+        if (block.number >= unbondingEndblock) {
             uint256 numberOfIndexers = delegationAddress[delegationAddressIndex].length();
             uint256 GRTPerIndexers = tokenStatus.waitingToUndelegate / numberOfIndexers;
-            for (uint256 i=0;i<numberOfIndexers;i++){
+            for (uint256 i = 0; i < numberOfIndexers; i++) {
                 address addressToBeDelegated = delegationAddress[delegationAddressIndex].at(i);
-                delegationShares[addressToBeDelegated] += grtStakingAddress.withdrawDelegated(addressToBeDelegated, address(0));
+                delegationShares[addressToBeDelegated] +=
+                    grtStakingAddress.withdrawDelegated(addressToBeDelegated, address(0));
                 emit GRTUndelegatedFromIndexer(addressToBeDelegated, GRTPerIndexers);
             }
             uint256 thawingPeriod = StakingV2Storage(address(grtStakingAddress)).thawingPeriod();
-            redeemEndblock = unbondingEndblock + (thawingPeriod*5/28); //+ 5 days
+            redeemEndblock = unbondingEndblock + (thawingPeriod * 5 / 28); //+ 5 days
             unbondingEndblock = block.number + thawingPeriod;
         }
     }
-    
+
+    /**
+     * @dev transfer with whenNotPaused modifier
+     * @param recipient Address to be transferred
+     * @param amount Amount of tokens to be transferred
+     */
+    function transfer(address recipient, uint256 amount) public override (ERC20Rebasing) whenNotPaused returns (bool) {
+        return super.transfer(recipient, amount);
+    }
+
+    /**
+     * @dev transferFrom with whenNotPaused modifier
+     * @param sender Address to be transferred
+     * @param recipient Address to be transferred
+     * @param amount Amount of tokens to be transferred
+     */
+    function transferFrom(address sender, address recipient, uint256 amount)
+        public
+        virtual
+        override
+        whenNotPaused
+        returns (bool)
+    {
+        return transferFrom(sender, recipient, amount);
+    }
+
     /**
      * @dev Mints token
      * @param to Address to be minted tokens
      * @param amount Amount of tokens to be minted
      */
-    function mint(address to, uint256 amount) internal {
+    function mint(address to, uint256 amount) internal whenNotPaused {
         _mint(to, amount);
     }
 
@@ -305,7 +355,7 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @dev Burns token
      * @param amount Amount of tokens to be burned
      */
-    function burn(uint256 amount) public virtual {
+    function burn(uint256 amount) public virtual whenNotPaused {
         _burn(_msgSender(), amount);
     }
 
@@ -313,7 +363,7 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @dev Set protocol fee
      * @param newFee New fee
      */
-    function setProtocolFee(uint32 newFee) external{
+    function setProtocolFee(uint32 newFee) external {
         fee = newFee;
         emit NewFee(newFee);
     }
@@ -322,8 +372,8 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @dev Return staking contract tax percentage
      * @return Tax percentage
      */
-    function getDelegationTaxPercentage() public view returns(uint32){
-        require(address(grtStakingAddress) != address(0),"Staking address not set");
+    function getDelegationTaxPercentage() public view returns (uint32) {
+        require(address(grtStakingAddress) != address(0), "Staking address not set");
         return grtStakingAddress.delegationTaxPercentage();
     }
 
@@ -332,8 +382,8 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @param _grtAmount GRT amount to be converted.
      * @return GRT amount after tax
      */
-    function taxGRTAmount(uint256 _grtAmount) public view returns(uint256){
-        return (_grtAmount*(getDelegationTaxPercentage()))/1000000;
+    function taxGRTAmount(uint256 _grtAmount) public view returns (uint256) {
+        return (_grtAmount * (getDelegationTaxPercentage())) / 1000000;
     }
 
     /**
@@ -341,15 +391,15 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @param _grtAmount GRT amount to be converted.
      * @return GRT amount after tax
      */
-    function feeGRTAmount(uint256 _grtAmount) public view returns(uint256){
-        return (_grtAmount*(fee))/1000000;
+    function feeGRTAmount(uint256 _grtAmount) public view returns (uint256) {
+        return (_grtAmount * (fee)) / 1000000;
     }
-    
+
     /**
      * @dev Return GRT amount pending to be delegated.
      * @return GRT amount to be delegated
      */
-    function getToBeDelegatedAmount() external view returns(uint256){
+    function getToBeDelegatedAmount() external view returns (uint256) {
         return tokenStatus.waitingToDelegate;
     }
 
@@ -358,14 +408,14 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @param _stakingEpochManager Staking epoch manager address.
      */
     function setStakingEpochManager(address _stakingEpochManager) external onlyOwner {
-        stakingEpochManager=_stakingEpochManager;
+        stakingEpochManager = _stakingEpochManager;
     }
 
     /**
      * @dev Return current epoch.
      * @return Staking epoch number
      */
-    function getEpoch() external view returns(uint256){
+    function getEpoch() external view returns (uint256) {
         return IEpochManager(stakingEpochManager).currentEpoch();
     }
 
@@ -374,63 +424,89 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      * @param _epoch Epoch number
      * @return Epoch start block
      */
-    function epochStartBlock(uint256 _epoch) public view returns(uint256){
+    function epochStartBlock(uint256 _epoch) public view returns (uint256) {
         uint256 updatedEpoch = IEpochManager(stakingEpochManager).lastLengthUpdateEpoch();
         uint256 updatedBlock = IEpochManager(stakingEpochManager).lastLengthUpdateBlock();
         uint256 epochLenght = IEpochManager(stakingEpochManager).epochLength();
         require(_epoch >= updatedEpoch);
-        
-        return updatedBlock + ((_epoch - updatedEpoch)*epochLenght);
+
+        return updatedBlock + ((_epoch - updatedEpoch) * epochLenght);
     }
-    function epochEndBlock(uint256 _epoch) public view returns(uint256){
-        return epochStartBlock(_epoch+1);
+
+    function epochEndBlock(uint256 _epoch) public view returns (uint256) {
+        return epochStartBlock(_epoch + 1);
     }
 
     /**
      * @dev Return GRT token delegated on staking contract.
      * @return Delegated GRT amount
      */
-    function totalGrtOnGraphStakingContract() public view returns(uint256){
-
+    function totalGrtOnGraphStakingContract() public view returns (uint256) {
         uint256 totalAmount;
 
-        for(uint256 i = 0; i<delegationAddress[delegationAddressIndex].length(); i++){
-            IStakingData.Delegation memory delegation = grtStakingAddress.getDelegation(delegationAddress[delegationAddressIndex].at(i), address(this));
-            (,,,, uint256 totalTokens, uint256 totalShares) = StakingV2Storage(address(grtStakingAddress)).delegationPools(delegationAddress[delegationAddressIndex].at(i));
+        for (uint256 i = 0; i < delegationAddress[delegationAddressIndex].length(); i++) {
+            IStakingData.Delegation memory delegation =
+                grtStakingAddress.getDelegation(delegationAddress[delegationAddressIndex].at(i), address(this));
+            (,,,, uint256 totalTokens, uint256 totalShares) = StakingV2Storage(address(grtStakingAddress))
+                .delegationPools(delegationAddress[delegationAddressIndex].at(i));
 
-            totalAmount += (delegation.shares*totalTokens/totalShares);
+            totalAmount += (delegation.shares * totalTokens / totalShares);
         }
 
         return totalAmount;
     }
 
     /**
+     * @dev Return current unix day.
+     * @return Unix day
+     */
+    function getDurrentUnixDay() public view returns (uint256) {
+        return block.timestamp / 1 days;
+    }
+
+    /**
      * @dev Rebases token.
      */
-    function rebase() external onlyOwner{
+    function rebase() external {
+        require(getDurrentUnixDay() > lastRebaseUnixDay, "Already rebased recently");
+        lastRebaseUnixDay = getDurrentUnixDay();
+
         uint256 currentTotalStake = totalGrtOnGraphStakingContract();
-        require(currentTotalStake>0,"No stake yet");
-        require(currentTotalStake != totalSupply,"No rewards");
+        require(currentTotalStake > 0, "No stake yet");
+        require(currentTotalStake != totalSupply, "No rewards");
         _rebase(currentTotalStake);
-        
+
         emit Rebase(currentTotalStake);
+    }
+
+    /**
+     * @dev Set required collateral amount to pause contract.
+     * @param _collateralAmountToPause Collateral amount to pause contract.
+     */
+    function setCollateralAmountToPause(uint256 _collateralAmountToPause) external onlyOwner {
+        collateralAmountToPause = _collateralAmountToPause;
+
+        emit CollateralAmountToPauseChanged(_collateralAmountToPause);
     }
 
     /**
      * @dev Pause contract.
      */
-    function pause() external whenNotPaused{
+    function pause() external whenNotPaused {
+        // collateral needed if not owner
+        if (msg.sender != owner()) {
+            require(grtToken.balanceOf(msg.sender) >= collateralAmountToPause, "Not enough collateral");
+            grtToken.transferFrom(msg.sender, address(this), collateralAmountToPause);
+        }
         _pause();
     }
 
     /**
      * @dev Unpause contract.
      */
-    function unpause() external whenPaused{
+    function unpause() external whenPaused onlyOwner {
         _unpause();
     }
-
-
 
     /**
      * @dev Emitted when GRT token address changed to `grtToken`.
@@ -475,7 +551,7 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
     /**
      * @dev Emitted when the `user` withdraws `amount` amount of unbonded GRT token.
      */
-    event UserWithdraw(address user,uint256 amount);
+    event UserWithdraw(address user, uint256 amount);
 
     /**
      * @dev Emitted when the `user` deposits and delegate `amount` of GRT token.
@@ -487,23 +563,25 @@ contract StakedGRT is Initializable, ERC20Rebasing, OwnableUpgradeable, Reentran
      */
     event Rebase(uint256 newSupply);
 
+    /**
+     * @dev Emmited when new collateral amount to pause contract is set to `newCollateralAmountToPause`.
+     */
+    event CollateralAmountToPauseChanged(uint256 newCollateralAmountToPause);
 
-
-    struct PendingUndelegate{
+    struct PendingUndelegate {
         uint256 availableAmount;
         uint256 lockedAmount;
         uint256 lockedUntilBlock;
     }
 
-    struct TokenStatus{
+    struct TokenStatus {
         uint256 waitingToDelegate;
         uint256 delegated;
         uint256 waitingToUndelegate;
         uint256 undelegated;
     }
 
-    struct StakingRewardsClaimStatus{
+    struct StakingRewardsClaimStatus {
         uint256 claimed;
     }
-
 }
