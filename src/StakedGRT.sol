@@ -322,8 +322,8 @@ contract StakedGRT is
      * @param recipient Address to be transferred
      * @param amount Amount of tokens to be transferred
      */
-    function transfer(address recipient, uint256 amount) public override (ERC20Rebasing) whenNotPaused returns (bool) {
-        return super.transfer(recipient, amount);
+    function transfer(address recipient, uint256 amount) public override whenNotPaused returns (bool) {
+        return transfer(recipient, amount);
     }
 
     /**
